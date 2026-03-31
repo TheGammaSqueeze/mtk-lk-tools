@@ -1,6 +1,6 @@
-# MTK Download Agent (DA) Analysis (MT6897 / Dimensity 8200)
+# MTK Download Agent (DA) Analysis (MT6897 / Dimensity 8300)
 
-Analysis of the Download Agent from the 557 device (Anbernic gaming console, MT6897 / Dimensity 8200). The DA was compiled from a Xiaomi Duchamp (N11A-DUCHAMP / Redmi K70 Pro) BSP, which Anbernic licensed/reused for their MT6897 platform. The eFuse configuration from the Xiaomi BSP was carried over, which is why a Xiaomi-signed DA works on this Anbernic device.
+Analysis of the Download Agent from the 557 device (Anbernic gaming console, MT6897 / Dimensity 8300). The DA was compiled from a Xiaomi Duchamp (N11A-DUCHAMP / Redmi K70 Pro) BSP, which Anbernic licensed/reused for their MT6897 platform. The eFuse configuration from the Xiaomi BSP was carried over, which is why a Xiaomi-signed DA works on this Anbernic device.
 
 The Download Agent is loaded by the BROM or preloader over USB during flash operations (SP Flash Tool, mtkclient). Once loaded into DRAM, it takes over the device and handles all flash read/write/erase operations.
 

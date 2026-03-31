@@ -1,6 +1,6 @@
-# MTK TEE/ATF Analysis (MT6897 / Dimensity 8200)
+# MTK TEE/ATF Analysis (MT6897 / Dimensity 8300)
 
-Analysis of the TEE image from the 557 device, a MediaTek MT6897 (Dimensity 8200) platform. The TEE image contains the ARM Trusted Firmware (BL31) that runs at Exception Level 3 (EL3) in the secure world.
+Analysis of the TEE image from the 557 device, a MediaTek MT6897 (Dimensity 8300) platform. The TEE image contains the ARM Trusted Firmware (BL31) that runs at Exception Level 3 (EL3) in the secure world.
 
 ## Image Overview
 

@@ -1,6 +1,6 @@
-# MTK LK Bootloader Analysis (MT6897 / Dimensity 8200)
+# MTK LK Bootloader Analysis (MT6897 / Dimensity 8300)
 
-Analysis of the LK (Little Kernel) bootloader from the 557 device, a MediaTek MT6897 (Dimensity 8200) platform.
+Analysis of the LK (Little Kernel) bootloader from the 557 device, a MediaTek MT6897 (Dimensity 8300) platform.
 
 ## Image Overview
 

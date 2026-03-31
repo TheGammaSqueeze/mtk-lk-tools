@@ -1,6 +1,6 @@
-# MTK Preloader Analysis (MT6897 / Dimensity 8200)
+# MTK Preloader Analysis (MT6897 / Dimensity 8300)
 
-Analysis of the preloader from the 557 device, a MediaTek MT6897 (Dimensity 8200) platform. The preloader is the first software stage after the Boot ROM (BROM) and is responsible for hardware initialization, DRAM training, security setup, and loading the next boot stage (LK).
+Analysis of the preloader from the 557 device, a MediaTek MT6897 (Dimensity 8300) platform. The preloader is the first software stage after the Boot ROM (BROM) and is responsible for hardware initialization, DRAM training, security setup, and loading the next boot stage (LK).
 
 ## Binary Overview
 
