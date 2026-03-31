@@ -1,8 +1,8 @@
 # mtk-lk-tools
 
-Tools for unpacking, repacking, and re-signing MediaTek (MTK) LK (Little Kernel) bootloader images.
+Tools for unpacking, repacking, and re-signing MediaTek (MTK) LK (Little Kernel) bootloader and preloader images.
 
-These scripts handle the full signing workflow needed to modify MTK LK images and have them accepted by the bootloader's verified boot chain.
+These scripts handle the full signing workflow needed to modify MTK LK and preloader images and have them accepted by the bootloader's verified boot chain.
 
 ## Requirements
 
@@ -91,6 +91,33 @@ Or if you already have a modified LK image and just need to fix the signatures:
 ./lk-resign modified_lk.img -o signed_lk.img
 ```
 
+### Re-sign a preloader image
+
+```bash
+./preloader-resign preloader.bin --info              # Show structure and verify hashes
+./preloader-resign preloader.bin --verify             # Verify both signatures
+./preloader-resign preloader.bin -o preloader_out.bin  # Re-sign to new file
+./preloader-resign preloader.bin                       # In-place (creates .bak)
+```
+
+Supports all MTK preloader container formats: bare GFH, UFS_BOOT, and EMMC_BOOT. Parses the GFH header chain, locates the SLA signature region, recomputes the content hash, and re-signs Block 2 with the image private key. Block 1 (root key certificate) is never modified.
+
+### Preloader workflow
+
+```bash
+# 1. Check current signing keys
+./preloader-resign preloader.bin --verify
+
+# 2. Modify the preloader binary (hex editor, binary patch, etc.)
+# ... modify preloader.bin ...
+
+# 3. Re-sign
+./preloader-resign preloader.bin -o preloader_signed.bin
+
+# 4. Flash
+fastboot flash preloader preloader_signed.bin
+```
+
 ## Included Keys
 
 The `keys/` directory contains MediaTek's default test signing keys, sourced from the alps SDK (`vendor/mediatek/proprietary/scripts/sign-image_v2/hsm_test_keys/`). Many MTK devices in development or with unlocked bootloaders use these keys.
@@ -102,7 +129,7 @@ The `keys/` directory contains MediaTek's default test signing keys, sourced fro
 | `keys/img_prvk.pem` | Image private key (signs cert2, used for re-signing) |
 | `keys/img_pubk.pem` | Image public key (used for signature verification) |
 
-Use `lk-check` to verify whether your device's LK image uses these keys before attempting to re-sign.
+Use `lk-check` or `preloader-resign --verify` to verify whether your device's images use these keys before attempting to re-sign. Both LK images and preloaders use the same key pair, just with different signing structures.
 
 ## How MTK LK Image Signing Works
 
@@ -229,6 +256,149 @@ The re-signing process:
 **lk_resign.py** parses the image, computes fresh hashes for each partition (with alignment padding), and compares them against the hashes already embedded in cert2. If a hash has changed, it patches the new hash into cert2, re-extracts the TBS region, generates a new RSA-PSS signature using the image private key, patches the signature in, and verifies it. Partitions with unchanged hashes are left completely untouched, preserving their original signatures.
 
 **lk_repack.py** takes an unpacked directory and an original image as inputs. It uses the original image as a structural template (preserving certificate headers and cert chain), replaces partition headers and data from the unpacked directory, rebuilds the binary image, and then calls lk_resign to fix any stale hashes. The output is padded to match the original image size.
+
+## How MTK Preloader Signing Works
+
+Preloader images use a completely different signing structure from LK images, even though they use the same RSA keys.
+
+### Container formats
+
+A preloader binary can be wrapped in one of three container formats:
+
+- **UFS_BOOT**: 16-byte header with magic `UFS_BOOT`, followed by a BRLYT (boot region layout table) at offset 0x200, with the actual preloader at the BRLYT's `boot_region_addr` (typically 0x1000). Used by devices with UFS storage (MT6897, etc.).
+- **EMMC_BOOT**: Similar container for eMMC-based devices, with magic `EMMC_BOOT`.
+- **Bare GFH**: No container wrapper. The file starts directly with the GFH header chain (magic `MMM\x01`). Used by some older platforms (MT8168, etc.).
+
+The container is just a wrapper. The signing structure is the same regardless of container format.
+
+### GFH header chain
+
+Inside the container (or at the start of a bare GFH file), the preloader begins with a chain of GFH (Generic File Header) structures. The first is always `GFH_FILE_INFO`, which contains:
+
+| Field | Description |
+|-------|-------------|
+| `file_len` | Total length of the preloader (GFH headers + content + signature region) |
+| `sig_type` | Signature type. Must be `5` for the two-block SLA structure |
+| `sig_len` | Size of the signature region at the tail (1,644 bytes for RSA-2048) |
+| `content_offset` | Offset from GFH start to the binary content |
+
+The signature region occupies the last `sig_len` bytes of the preloader (from `file_len - sig_len` to `file_len`).
+
+### Two-block SLA signature structure
+
+The signature region (1,644 bytes for RSA-2048 keys) contains a 4-byte prefix followed by two signature blocks:
+
+```
++----------------------------------------------------+
+| Prefix: num_blocks = 2 (4 bytes, LE u32)           |
++----------------------------------------------------+
+| Block 1: Key Binding Certificate (1,324 bytes)     |
+|   - Root public key modulus (256 bytes)             |
+|   - Image public key modulus (256 bytes)            |
+|   - RSA-PSS signature by root key (256 bytes)       |
++----------------------------------------------------+
+| Block 2: Image Signature (316 bytes)               |
+|   - SHA256 hash of content (32 bytes)              |
+|   - RSA-PSS signature by image key (256 bytes)      |
++----------------------------------------------------+
+```
+
+**Block 1** is a key binding certificate. It contains both public keys and is signed by the root private key. It proves that the image public key is authorized by the root key. This block is independent of the preloader content and never needs to be modified.
+
+**Block 2** is the image signature. It contains a SHA256 hash of the preloader content and is signed by the image private key. This block must be re-signed whenever the preloader binary is modified.
+
+### Detailed Block 1 layout (1,324 bytes)
+
+```
+Offset  Size  Field
+------  ----  -----
+0x000      4  Magic: 0xE291F358 (LE)
+0x004      4  Version: 0x00010000
+0x008      4  Block size: 1324
+0x00C      4  Flags: 0x00010100
+0x010      4  Root key algo: 3 (RSA)
+0x014      4  Root key length: 256
+0x018      4  Reserved: 0
+0x01C      4  Root exponent: 65537
+0x020    252  Padding (zeros)
+0x11C    256  Root public key modulus (big-endian)
+0x21C      4  Image key algo: 3
+0x220      4  Image key length: 256
+0x224      4  Reserved: 0
+0x228      4  Image exponent: 65537
+0x22C    252  Padding (zeros)
+0x328    256  Image public key modulus (big-endian)
+0x428      4  Signature marker: 1
+0x42C    256  RSA-PSS signature (root signs bytes 0x000-0x42C)
+```
+
+TBS (to-be-signed) for Block 1: bytes 0x000 through 0x42C (1,068 bytes), signed by `root_prvk.pem`.
+
+### Detailed Block 2 layout (316 bytes)
+
+```
+Offset  Size  Field
+------  ----  -----
+0x000      4  Magic: 0xE291F358 (LE)
+0x004      4  Version: 0x00010000
+0x008      4  Block size: 316
+0x00C      4  Flags: 0x00020100
+0x010      4  Hash count: 1
+0x014      4  Reserved: 0
+0x018      4  Reserved: 0
+0x01C     32  SHA256 of content (from GFH start to sig region start)
+0x03C    256  RSA-PSS signature (img signs bytes 0x000-0x03C)
+```
+
+TBS for Block 2: bytes 0x000 through 0x03C (60 bytes, including the content hash), signed by `img_prvk.pem`.
+
+### Content hash coverage
+
+The SHA256 hash in Block 2 covers all bytes from the GFH start (where the `MMM` magic is) up to the start of the signature region. This includes the GFH header chain and the entire preloader binary, but not the signature region itself.
+
+For a preloader inside a UFS_BOOT container at offset 0x1000 with `file_len=0xC1A6C` and `sig_len=0x66C`:
+- Hash covers: bytes `[0x1000, 0xC2400)` (that is, `file_len - sig_len` bytes starting from the GFH offset)
+
+### Signing algorithm
+
+Both blocks use **RSA-PSS** with:
+
+- Hash: SHA-256
+- Mask generation function: MGF1 with SHA-256
+- Salt length: **32** (fixed, not auto/-1 like LK images)
+
+This is a key difference from LK image signing, which uses `salt_length=-1` (auto/max). Using the wrong salt length will produce signatures that fail verification.
+
+The equivalent OpenSSL command for preloader signing:
+
+```bash
+openssl dgst -sha256 \
+    -sigopt rsa_padding_mode:pss \
+    -sigopt rsa_pss_saltlen:32 \
+    -sign keys/img_prvk.pem \
+    -out sig.bin \
+    tbs.bin
+```
+
+### Re-signing process
+
+Only Block 2 needs to be updated when the preloader content changes:
+
+1. Compute `SHA256(data[gfh_offset : sig_region_start])`
+2. Write the new hash into Block 2 at offset 0x01C (32 bytes)
+3. Extract the Block 2 TBS region (60 bytes: from magic through the hash)
+4. Sign the TBS with RSA-PSS SHA256 (salt_length=32) using `img_prvk.pem`
+5. Write the 256-byte signature into Block 2 at offset 0x03C
+
+Block 1 is never modified because it only contains key bindings, not content hashes.
+
+### How preloader_resign.py works
+
+The tool parses the container format (UFS_BOOT, EMMC_BOOT, or bare GFH) to find the GFH header chain. It reads the `GFH_FILE_INFO` to determine `file_len` and `sig_len`, which gives the exact boundaries of the signature region. It then parses the two-block SLA structure using the `0xE291F358` magic markers.
+
+For re-signing, it recomputes the SHA256 content hash, patches it into Block 2, re-signs the Block 2 TBS with the image private key, and writes the new signature. The output is padded to match the original file size.
+
+In `--verify` mode, it independently verifies both Block 1 (against `root_pubk.pem`) and Block 2 (against `img_pubk.pem`) to confirm the image is properly signed.
 
 ### Notes on signature preservation
 

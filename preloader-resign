@@ -1,0 +1,6 @@
+#!/bin/bash
+# Re-sign an MTK preloader image (GFH/UFS_BOOT/EMMC_BOOT format)
+# Usage: preloader-resign <image> [-o output] [-k keys_dir] [--info] [--verify]
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/preloader_resign.py" "$@"
