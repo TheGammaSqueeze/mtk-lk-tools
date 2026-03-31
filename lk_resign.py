@@ -336,8 +336,12 @@ def resign_image(image_path, output_path=None, keys_dir=DEFAULT_KEYS_DIR,
     if out == image_path:
         # Backup
         bak = image_path + '.bak'
-        shutil.copy2(image_path, bak)
-        print(f"\nBackup: {bak}")
+        try:
+            shutil.copy2(image_path, bak)
+            print(f"\nBackup: {bak}")
+        except OSError:
+            shutil.copy(image_path, bak)
+            print(f"\nBackup: {bak} (without metadata)")
 
     with open(out, 'wb') as f:
         f.write(result)

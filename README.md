@@ -150,6 +150,22 @@ open('preloader_a_patched.bin','wb').write(d)
 
 See [DA_ANALYSIS.md](DA_ANALYSIS.md) for a detailed explanation of why this works.
 
+### Important: Windows/NTFS mount workaround
+
+When writing output to a Windows mount (`/mnt/c/` in WSL), always write to a Linux filesystem first, then copy:
+
+```bash
+# DO THIS (write to /tmp, then copy)
+./lk-repack work/ original.img -o /tmp/output.img
+./lk-resign /tmp/output.img
+cp /tmp/output.img /mnt/c/path/to/output.img
+
+# DON'T DO THIS (resign may silently fail on Windows mounts)
+./lk-repack work/ original.img -o /mnt/c/path/to/output.img
+```
+
+The `shutil.copy2` backup step can fail on NTFS metadata operations, which in older versions would crash before writing the re-signed output. The tools now handle this gracefully, but writing to a Linux filesystem first is safest.
+
 ## Included Keys
 
 The `keys/` directory contains MediaTek's default test signing keys, sourced from the alps SDK (`vendor/mediatek/proprietary/scripts/sign-image_v2/hsm_test_keys/`). Many MTK devices in development or with unlocked bootloaders use these keys.
