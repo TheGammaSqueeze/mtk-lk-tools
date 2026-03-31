@@ -197,3 +197,77 @@ The DRAM is LPDDR5X running at up to 8533 MHz. Modifying these values is extreme
 | **CPU** (alt) | MCUPM firmware | mcupm_a | YES | BLOCKED |
 
 The GPU OPP table in `lk_main_dtb` is the most accessible overclocking target. CPU overclocking is best done through the kernel (boot image / DTB overlay) rather than through the encrypted MCUPM firmware.
+
+## GPU Undervolting
+
+Undervolting reduces power consumption and heat, allowing the GPU to sustain higher frequencies for longer before thermal throttling kicks in (119 C trip point). The GPU OPP table in `lk_main_dtb` directly controls the voltage-frequency curve.
+
+### Stock Voltage Curve
+
+The stock curve runs from 500 mV at 265 MHz to 931.25 mV at 1400 MHz, with 6.25 mV steps:
+
+| Frequency | Stock Voltage | mV/MHz Ratio |
+|-----------|--------------|-------------|
+| 1400 MHz | 931.25 mV | 0.665 |
+| 1200 MHz | 856.25 mV | 0.710 |
+| 1000 MHz | 775.00 mV | 0.777 |
+| 800 MHz | 706.25 mV | 0.883 |
+| 600 MHz | 631.25 mV | 1.050 |
+| 400 MHz | 556.25 mV | 1.380 |
+
+The PMIC supports down to ~400 mV and up to 1193.75 mV, so there is headroom in both directions.
+
+### Power Savings from Undervolting
+
+Power is proportional to V^2 * f. Reducing voltage has a squared effect on power consumption:
+
+| Offset | Voltage at 1400 MHz | Power Reduction | Impact |
+|--------|-------------------|----------------|--------|
+| -25 mV | 906.25 mV | ~5% | Conservative, safe for all chips |
+| -50 mV | 881.25 mV | ~10% | Good balance of temps and stability |
+| -75 mV | 856.25 mV | ~15% | Significant thermal improvement |
+| -100 mV | 831.25 mV | ~20% | Aggressive, test thoroughly |
+
+At higher frequencies the absolute power savings are larger. A -50 mV undervolt at 1400 MHz saves ~10% power, which translates directly to lower temperatures and longer sustained boost clocks before thermal throttling.
+
+### Recommended Undervolt Profiles
+
+**Conservative (-25 mV offset across entire curve):**
+- Safe starting point, minimal risk of instability
+- 1400 MHz: 931.25 -> 906.25 mV
+- 1000 MHz: 775.00 -> 750.00 mV
+- 600 MHz: 631.25 -> 606.25 mV
+
+**Moderate (-50 mV offset):**
+- Good balance of thermal improvement and stability
+- 1400 MHz: 931.25 -> 881.25 mV
+- 1000 MHz: 775.00 -> 725.00 mV
+- 600 MHz: 631.25 -> 581.25 mV
+
+**Aggressive (-75 mV offset):**
+- Maximum thermal benefit, requires stability testing
+- 1400 MHz: 931.25 -> 856.25 mV
+- 1000 MHz: 775.00 -> 700.00 mV
+- 600 MHz: 631.25 -> 556.25 mV
+
+### How to Apply
+
+The undervolt is applied by modifying the `opp-microvolt` values in the `opp-table0` node of `lk_main_dtb`:
+
+1. Unpack the LK image: `./lk-unpack /mnt/c/557/lk_a -o work/`
+2. Decompile the DTB: `dtc -I dtb -O dts work/lk_main_dtb/data.bin -o work/lk_main_dtb/data.dts`
+3. Edit the OPP table in the .dts file: reduce each `opp-microvolt` value by the desired offset
+4. Recompile: `dtc -I dts -O dtb work/lk_main_dtb/data.dts -o work/lk_main_dtb/data.bin`
+5. Repack and re-sign: `./lk-repack work/ /mnt/c/557/lk_a -o lk_a_undervolted`
+6. Flash: `fastboot flash lk lk_a_undervolted`
+
+The same approach works for overvolting (to stabilize overclocks) or for creating a combined overclock + undervolt profile (e.g., raise max frequency to 1500 MHz while keeping the voltage curve moderate).
+
+### Stability Notes
+
+- Insufficient voltage causes GPU hangs, artifacts, or driver crashes (not permanent damage)
+- Start with -25 mV and stress test (e.g., heavy 3D gaming) before going lower
+- Lower frequencies are more tolerant of undervolt than higher ones
+- If unstable, you can apply a non-uniform offset: larger reduction at low frequencies, smaller at high frequencies
+- The GPUEB firmware may apply additional voltage margins on top of the OPP table values
+- Silicon lottery means each chip has different minimum stable voltages
