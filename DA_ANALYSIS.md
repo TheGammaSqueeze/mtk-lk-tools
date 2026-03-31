@@ -318,6 +318,76 @@ The DA uses the HACC (Hardware Access Control Cipher) engine for:
 - **Progress reporting**: XML-based progress reports to host tool
 - **DRAM diagnostics**: Full DRAM test and repair via `CMD:RAM-TEST` and `CMD:DEBUG:DRAM-REPAIR`
 
+## DA_BR vs DA_BR2: Different Signing Keys
+
+Two DA binaries exist for this device:
+
+| | DA_BR.bin | DA_BR2.bin |
+|---|-----------|------------|
+| **Size** | 1,194,924 bytes | 1,254,524 bytes |
+| **Version** | v6, 2023-07-26 | v6, 2025-07-30 |
+| **DA ID** | 0x1203DADA | 0x1375DADA |
+| **Signing key** | Xiaomi custom key | MTK test key (root_pubk.pem) |
+| **root_pubk.pem embedded** | No | Yes (at 0x118a8c) |
+| **Accepted by 557 BROM** | Yes | No (rejected) |
+
+**DA_BR2** is a newer, generic MTK Download Agent signed with the standard MTK test root key. It embeds `root_pubk.pem`'s modulus directly in its binary. However, the 557's BROM rejects it because the eFuse-burned public key hash on this device is Xiaomi-specific, not the MTK test key hash.
+
+**DA_BR** is the OEM-specific DA signed with Xiaomi's key, which matches the eFuse hash. This is the only DA the BROM will accept on production 557 devices.
+
+This confirms that while the **LK, TEE, and preloader images** use the standard MTK test signing keys (cert1/cert2 chain), the **DA authentication** uses a separate Xiaomi-specific key burned into eFuse. The DA signing key and the image signing key are independent.
+
+## Why Erasing Preloader (LUA0/LUA1) Bypasses DA Security
+
+When the preloader boot LUNs (LUA0/LUA1) are erased, the DA allows unrestricted writes to all partitions in LUA2 (the main UFS user area). This happens because of how the DA constructs its security policy:
+
+### Security State Determination
+
+The DA determines two key values before enforcing any policy:
+
+**sboot_state** is derived by:
+1. Reading the preloader from UFS boot LUN, searching for `AND_ROMINFO_v` magic
+2. Extracting `AND_SECCTRL.seccfg_attr` from the ROM_INFO structure
+3. If ROM_INFO is not found (boot LUN erased): defaults to `0x22`
+4. Value `0x22` means "defer to eFuse `sbc_en` bit"
+5. On this device, the preloader's `AND_SECCTRL` also has `attr=0x22`
+
+So whether the preloader is present or erased, `sboot_state` resolves the same way: it reads the eFuse `sbc_en` bit. If `sbc_en` is not blown (typical for consumer devices with test keys), `sboot_state=0`.
+
+**lock_state** is derived by:
+1. Reading the `seccfg` partition from LUA2 (user data area, not boot LUNs)
+2. If seccfg magic is 0 (empty/corrupt): `lock_state=1`
+3. Any `lock_state <= 2` gets overridden to `4` in the policy function
+4. Only `lock_state=3` is treated as "locked"; everything else is "unlocked"
+
+### The Policy Table
+
+The DA's SEC_POLICY function uses a 4-column lookup table based on (sboot_state, lock_state):
+
+| Partition | sboot=0, unlocked | sboot=0, locked | sboot=1, unlocked | sboot=1, locked |
+|-----------|:-:|:-:|:-:|:-:|
+| default | NONE | NONE | AUTH | NONE |
+| preloader | NONE | NONE | AUTH | NONE |
+| lk | NONE | NONE | AUTH | NONE |
+| boot | NONE | NONE | NONE | NONE |
+
+Policy values: NONE=no restriction, AUTH=img_auth_required.
+
+**Every column is all-zeros (no restrictions) except sboot=1/unlocked**, which requires image authentication for firmware partitions. This means:
+
+- If `sbc_en` is not blown in eFuse: all writes are unrestricted regardless of lock state
+- If `sbc_en` IS blown: writes are only restricted when the device is in the unusual "secure boot + unlocked" state
+
+### The Actual Mechanism
+
+The bypass when erasing boot LUNs likely comes from **UFS write protection**, not the SEC_POLICY table. The DA explicitly manages UFS write protection:
+
+- The preloader normally sets UFS write protection on boot LUNs during normal boot
+- When the DA starts after BROM (because preloader is missing), the boot LUNs have no write protection set
+- The DA's `ufs_clr_write_protect` functions clear write protection on BOOT1/BOOT2/USER LUNs
+- With no preloader having set WP flags, the DA starts in a clean state where all LUNs are writable
+- Additionally, the BROM-direct boot path may initialize the security subsystem differently than the preloader-mediated path, resulting in a more permissive DA security context
+
 ## Summary: Workarounds for DA Image Rejection
 
 | Method | How it works | Limitations |
