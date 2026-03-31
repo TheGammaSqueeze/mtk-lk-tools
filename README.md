@@ -130,6 +130,26 @@ Supports all MTK preloader container formats: bare GFH, UFS_BOOT, and EMMC_BOOT.
 fastboot flash preloader preloader_signed.bin
 ```
 
+### Bypass DA flash restrictions via preloader patch
+
+On devices where the Download Agent (DA) rejects partition writes (even for valid images), you can patch the preloader to remove the security metadata that the DA reads. This makes the DA fall back to permissive mode, allowing unrestricted writes via SP Flash Tool.
+
+```bash
+# 1. Zero out the AND_ROMINFO_v magic (16 bytes at offset 0x1288 for UFS_BOOT preloaders)
+python3 -c "
+d = bytearray(open('preloader_a.bin','rb').read())
+d[0x1288:0x1298] = b'\x00' * 16
+open('preloader_a_patched.bin','wb').write(d)
+"
+
+# 2. Re-sign
+./preloader-resign preloader_a_patched.bin -o preloader_a_norominfo.bin
+
+# 3. Flash to both preloader slots
+```
+
+See [DA_ANALYSIS.md](DA_ANALYSIS.md) for a detailed explanation of why this works.
+
 ## Included Keys
 
 The `keys/` directory contains MediaTek's default test signing keys, sourced from the alps SDK (`vendor/mediatek/proprietary/scripts/sign-image_v2/hsm_test_keys/`). Many MTK devices in development or with unlocked bootloaders use these keys.

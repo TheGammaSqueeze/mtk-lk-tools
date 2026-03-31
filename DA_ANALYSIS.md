@@ -392,12 +392,34 @@ The bypass when erasing boot LUNs likely comes from **UFS write protection**, no
 
 | Method | How it works | Limitations |
 |--------|-------------|-------------|
+| **Patch preloader AND_ROMINFO** | Zero out `AND_ROMINFO_v` magic in the preloader, re-sign, flash to boot LUNs. DA can't find security metadata, falls back to permissive mode. **Confirmed working.** | Requires re-signing and flashing the preloader once |
+| **Erase boot LUNs** | Erase LUA0/LUA1 (preloader partitions). Same effect as above but destructive. | Device can't boot until preloader is reflashed |
 | **fastboot** | Bypasses DA entirely, uses LK's fastboot handler | Requires LK to be running, some partitions may still be restricted |
 | **mtkclient** | Runs custom DA or operates at BROM level, bypasses all security | Requires USB connection in BROM mode |
 | **dd from root shell** | Direct block device write, no signature checks | Requires root access and booted system |
-| **SP Flash Tool with correct .sig** | Provides valid external signatures to satisfy DA checks | Requires OEM signing key (not available) |
 
-The DA's security model is designed so that even dumped-from-device images may be rejected when written back, because the security checks verify against eFuse-burned values and seccfg state that may not match the image's certificates. This is by design to prevent unauthorized firmware modification on production devices.
+### Recommended: Patched Preloader (Permanent Fix)
+
+The cleanest solution is to patch the preloader's `AND_ROMINFO_v` magic to zeros and re-sign it. This makes the DA unable to find the security metadata structure, causing it to fall back to permissive mode for all partition writes. The preloader still boots normally because the preloader's own code accesses this structure by fixed offset, not by searching for the magic string.
+
+```bash
+# 1. Patch the AND_ROMINFO_v magic (16 bytes at offset 0x1288) to zeros
+python3 -c "
+d = bytearray(open('preloader_a.bin','rb').read())
+d[0x1288:0x1298] = b'\x00' * 16
+open('preloader_a_patched.bin','wb').write(d)
+"
+
+# 2. Re-sign
+./preloader-resign preloader_a_patched.bin -o preloader_a_norominfo.bin
+
+# 3. Flash to both boot LUNs
+# (use mtkclient, fastboot, or SP Flash Tool to write to preloader_a/preloader_b)
+```
+
+After flashing the patched preloader, SP Flash Tool with the OEM DA will allow unrestricted writes to all partitions in LUA2 (the main UFS user area). This has been tested and confirmed working on the 557 device.
+
+The DA's security model is designed so that even dumped-from-device images may be rejected when written back, because the security checks verify against eFuse-burned values and seccfg state that may not match the image's certificates. The patched preloader approach permanently removes this restriction.
 
 ## eFuse Security Model
 
