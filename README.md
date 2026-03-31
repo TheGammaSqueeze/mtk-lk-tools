@@ -91,6 +91,18 @@ Or if you already have a modified LK image and just need to fix the signatures:
 ./lk-resign modified_lk.img -o signed_lk.img
 ```
 
+### Re-sign a TEE image
+
+TEE (Trusted Execution Environment) images use the same LK partition format (cert1/cert2 DER chain) and the same signing keys. The `lk-resign` and `lk-check` tools work directly on TEE images:
+
+```bash
+./lk-check tee_a                          # Check TEE signing keys and hashes
+./lk-resign tee_a -o tee_a_signed         # Re-sign after modification
+./lk-unpack tee_a -o tee_unpacked/        # Unpack the atf partition
+```
+
+A TEE image typically contains a single `atf` (ARM Trusted Firmware) partition with cert1 + cert2.
+
 ### Re-sign a preloader image
 
 ```bash
@@ -129,7 +141,7 @@ The `keys/` directory contains MediaTek's default test signing keys, sourced fro
 | `keys/img_prvk.pem` | Image private key (signs cert2, used for re-signing) |
 | `keys/img_pubk.pem` | Image public key (used for signature verification) |
 
-Use `lk-check` or `preloader-resign --verify` to verify whether your device's images use these keys before attempting to re-sign. Both LK images and preloaders use the same key pair, just with different signing structures.
+Use `lk-check` or `preloader-resign --verify` to verify whether your device's images use these keys before attempting to re-sign. LK images, TEE images, and preloaders all use the same key pair, just with different signing structures (cert1/cert2 DER for LK and TEE, two-block SLA for preloaders).
 
 ## How MTK LK Image Signing Works
 
