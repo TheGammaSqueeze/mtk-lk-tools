@@ -1,0 +1,6 @@
+#!/bin/bash
+# Check certificates and signing keys in an MTK LK image
+# Usage: lk-check <image> [-k keys_dir]
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/lk_check.py" "$@"

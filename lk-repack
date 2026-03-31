@@ -1,0 +1,6 @@
+#!/bin/bash
+# Repack unpacked partitions into a signed LK image
+# Usage: lk-repack <unpacked_dir> <original_image> -o <output>
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/lk_repack.py" "$@"

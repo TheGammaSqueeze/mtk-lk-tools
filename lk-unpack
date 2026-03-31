@@ -1,0 +1,6 @@
+#!/bin/bash
+# Unpack an MTK LK image into sub-partition files
+# Usage: lk-unpack <image> [output_dir]
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/lk_unpack.py" "$@"

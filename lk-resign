@@ -1,0 +1,6 @@
+#!/bin/bash
+# Re-sign an MTK LK image (only updates changed partitions)
+# Usage: lk-resign <image> [-o output] [-k keys_dir] [--force]
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec python3 "$SCRIPT_DIR/lk_resign.py" "$@"
