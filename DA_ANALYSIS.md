@@ -1,6 +1,6 @@
 # MTK Download Agent (DA) Analysis (MT6897 / Dimensity 8200)
 
-Analysis of the Download Agent from the 557 device (Xiaomi Duchamp / Redmi K70 Pro, codename N11A-DUCHAMP), a MediaTek MT6897 (Dimensity 8200) platform.
+Analysis of the Download Agent from the 557 device (Anbernic gaming console, MT6897 / Dimensity 8200). The DA was compiled from a Xiaomi Duchamp (N11A-DUCHAMP / Redmi K70 Pro) BSP, which Anbernic licensed/reused for their MT6897 platform. The eFuse configuration from the Xiaomi BSP was carried over, which is why a Xiaomi-signed DA works on this Anbernic device.
 
 The Download Agent is loaded by the BROM or preloader over USB during flash operations (SP Flash Tool, mtkclient). Once loaded into DRAM, it takes over the device and handles all flash read/write/erase operations.
 
@@ -398,3 +398,45 @@ The bypass when erasing boot LUNs likely comes from **UFS write protection**, no
 | **SP Flash Tool with correct .sig** | Provides valid external signatures to satisfy DA checks | Requires OEM signing key (not available) |
 
 The DA's security model is designed so that even dumped-from-device images may be rejected when written back, because the security checks verify against eFuse-burned values and seccfg state that may not match the image's certificates. This is by design to prevent unauthorized firmware modification on production devices.
+
+## eFuse Security Model
+
+The 557 device has a split security configuration where image signing and DA authentication use **different** key systems:
+
+```
+eFuse Configuration:
+  sbc_en  = 0 (NOT blown)  -> No secure boot for images (LK, TEE, preloader)
+  daa_en  = 1 (blown)      -> DA must be authenticated against eFuse key hash
+  sla_en  = 0 (disabled)   -> No SLA challenge-response required
+```
+
+This explains the otherwise contradictory observation that:
+- **LK, TEE, and preloader** use standard MTK test signing keys and boot fine (because `sbc_en=0`, no image signature verification)
+- **DA_BR** (signed with Xiaomi/OEM key) is accepted by BROM (because `daa_en=1` and the eFuse DAA key hash matches the Xiaomi key)
+- **DA_BR2** (signed with MTK test key) is rejected by BROM (the MTK test key hash doesn't match the eFuse DAA key hash)
+
+The image signing keys (MTK test keys in `keys/`) and the DA signing key (Xiaomi/OEM specific) are completely independent. The device manufacturer chose not to blow `sbc_en` (leaving image verification disabled) while still enforcing DA authentication via `daa_en`.
+
+### Why a Xiaomi DA Works on an Anbernic Device
+
+The 557 is an Anbernic gaming console, not a Xiaomi phone. However, Anbernic licensed or reused Xiaomi's MT6897 BSP (Board Support Package) for their platform. The DA was compiled from Xiaomi's source tree at `/home/mi/ssd/N11A-DUCHAMP/`. The eFuse configuration (including the DAA key hash) was carried over from the Xiaomi BSP during manufacturing, which is why only Xiaomi-signed DAs are accepted.
+
+This is common in the Android/SoC ecosystem: smaller OEMs often reuse reference BSPs from larger manufacturers, inheriting their security configuration.
+
+### Extracting the eFuse DAA Key Hash
+
+The eFuse DAA public key hash is stored in hardware and cannot be extracted from binary files. It can potentially be read via:
+
+1. **DA UART output**: The DA prints `fuse pubk hash = ...` during security initialization. Connect a UART cable and capture the log during SP Flash Tool operations.
+2. **CMD:READ-EFUSE**: Use SP Flash Tool or mtkclient to send the `CMD:READ-EFUSE` command to the DA. The specific eFuse address for the DAA pubk hash depends on the MT6897 eFuse map.
+3. **Root shell**: On a booted and rooted device, read eFuse via sysfs: `/sys/devices/platform/efuse/` or similar platform-specific paths.
+4. **mtkclient**: Has eFuse read capability when connected in BROM mode, which may be able to dump the full eFuse contents including the DAA key hash.
+
+### Can We Re-sign a DA?
+
+**Not without the OEM's DA signing private key.** The DA signing key is separate from the MTK test keys used for image signing. To create a custom DA, you would need:
+
+1. The private key whose public key hash matches the eFuse DAA hash
+2. Or a way to bypass DAA entirely (e.g., exploiting a BROM vulnerability, or using mtkclient which operates at a lower level)
+
+The DA binary itself does not contain the verification public key. The BROM reads the key hash directly from eFuse hardware registers at runtime.
