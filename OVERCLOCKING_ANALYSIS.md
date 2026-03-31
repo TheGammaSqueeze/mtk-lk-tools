@@ -271,3 +271,65 @@ The same approach works for overvolting (to stabilize overclocks) or for creatin
 - If unstable, you can apply a non-uniform offset: larger reduction at low frequencies, smaller at high frequencies
 - The GPUEB firmware may apply additional voltage margins on top of the OPP table values
 - Silicon lottery means each chip has different minimum stable voltages
+
+## Thermal Trip Points
+
+### LK DTB Thermal Zones (lk_main_dtb)
+
+The LK device tree defines **14 thermal zones**, all with identical trip points:
+
+| Property | Value | Meaning |
+|----------|-------|---------|
+| temperature | 0x1d0d8 | 119,000 millidegrees = **119 C** |
+| hysteresis | 0x7d0 | 2,000 millidegrees = **2 C** |
+| type (zone 0) | critical | Hardware shutdown |
+| type (zones 1-13) | passive | Software throttling |
+
+The 14 zones cover all CPU cores (sensors 0-7), GPU zones, and SoC thermal sensors.
+
+### DTBO Camera Thermal Zones
+
+The DTBO adds 4 camera-specific thermal zones (camera0-camera4) with:
+- temperature = 0x1d4c0 = 120,000 millidegrees = **120 C** (critical)
+
+### GPU-Specific Throttling (in LK binary)
+
+The LK binary contains a GPU 3.0 Limit Table with temperature-indexed frequency ceilings:
+- `[Temper] [Ceiling] [I_STACK] [I_SRAM] [P_STACK]` format
+- Temperature compensation: `GPU Temper Comp: %d (KHz or mV*100)` for both normal and high conditions
+- Current ceiling/floor system with priority-based limiters
+
+GPU power limiters (read from GPUEB shared memory, not directly modifiable in LK DTB):
+- Low battery level 0: ~1200 MHz cap
+- Low battery level 1: ~700 MHz cap
+- Low battery level 2: ~300 MHz cap
+- Battery over-current level 0: ~1200 MHz cap
+- Battery over-current level 1: ~700 MHz cap
+
+### Are Trip Points Adjustable?
+
+**Yes, but at different levels:**
+
+**LK DTB trip points (lk_main_dtb)**: These control thermal protection during the bootloader stage only. Modifiable by editing the DTB:
+- Change `0x1d0d8` (119 C) to e.g., `0x1e848` (125 C) or `0x20f58` (135 C)
+- This is the safety shutdown / passive throttle threshold during boot
+- Affects LK, bl2_ext, and AEE crash recovery thermal behavior
+
+**Kernel thermal framework**: The real thermal throttling that affects gaming performance lives in the kernel DTB (inside `boot_a` and `dtbo_a` partitions). The kernel has:
+- Active cooling maps linking thermal zones to cpufreq/gpufreq cooling devices
+- Multiple trip points per zone (not just a single critical trip)
+- Configurable polling intervals
+- Step-wise or power-allocator governors
+- These are modifiable via the kernel DTB (which we can sign via AVB)
+
+**GPUEB internal limits**: Battery OC, low battery, and PBM (Peak Bandwidth Manager) frequency caps are in the GPUEB firmware's shared memory configuration. These are read at runtime and are harder to modify (encrypted firmware).
+
+### Recommended Thermal Modifications
+
+For a gaming console, the LK DTB's 119 C is already quite high. The more impactful changes are:
+
+1. **GPU undervolt** (most effective): Lower voltage = less heat = longer sustained boost. Modify the OPP table in lk_main_dtb.
+
+2. **Kernel thermal policy** (in boot_a/dtbo_a): Adjust the active cooling trip points and step-wise throttling to be less aggressive. This is where the gaming performance throttling actually happens.
+
+3. **LK DTB trip point raise** (minor impact): Only affects boot-stage thermal, not runtime gaming. Raising from 119 C to 125 C gives slightly more headroom but the kernel's thermal framework kicks in well before that.
