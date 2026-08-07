@@ -1,8 +1,23 @@
 # mtk-lk-tools
 
-Tools for unpacking, repacking, and re-signing MediaTek (MTK) LK (Little Kernel) bootloader and preloader images.
+Tools for unpacking, repacking, re-signing, and patching MediaTek (MTK) LK (Little Kernel) bootloader and preloader images.
 
 These scripts handle the full signing workflow needed to modify MTK LK and preloader images and have them accepted by the bootloader's verified boot chain.
+
+## Device Guides and Analysis
+
+| Document | Contents |
+|----------|---------|
+| [DEVICE_557.md](DEVICE_557.md) | 557 (Anbernic, MT6897) eFuse config, signing key layout, known-working mods |
+| [BOOTLOADER_UNLOCK.md](BOOTLOADER_UNLOCK.md) | LK binary patching for bootloader unlock, lkpatcher workflow |
+| [PRELOADER_PATCHING.md](PRELOADER_PATCHING.md) | Preloader AND_ROMINFO_v patch for DA bypass, re-signing workflow |
+| [LK_ANALYSIS.md](LK_ANALYSIS.md) | LK image structure, sub-partitions, boot flow, fastboot, AVB |
+| [LK_SUBPARTITIONS_ANALYSIS.md](LK_SUBPARTITIONS_ANALYSIS.md) | Per-sub-partition analysis |
+| [PRELOADER_ANALYSIS.md](PRELOADER_ANALYSIS.md) | Preloader structure, GFH headers, signing structure |
+| [DA_ANALYSIS.md](DA_ANALYSIS.md) | Download Agent analysis, 7-layer security, AND_ROMINFO |
+| [TEE_ANALYSIS.md](TEE_ANALYSIS.md) | Trusted Execution Environment image analysis |
+| [OVERCLOCKING_ANALYSIS.md](OVERCLOCKING_ANALYSIS.md) | CPU/GPU/DRAM overclocking, what can be modified |
+| [FIRMWARE_DECRYPTION_ANALYSIS.md](FIRMWARE_DECRYPTION_ANALYSIS.md) | Encrypted firmware (MCUPM, GPUEB) analysis |
 
 ## Requirements
 
@@ -130,25 +145,61 @@ Supports all MTK preloader container formats: bare GFH, UFS_BOOT, and EMMC_BOOT.
 fastboot flash preloader preloader_signed.bin
 ```
 
-### Bypass DA flash restrictions via preloader patch
+### Patch LK for bootloader unlock
 
-On devices where the Download Agent (DA) rejects partition writes (even for valid images), you can patch the preloader to remove the security metadata that the DA reads. This makes the DA fall back to permissive mode, allowing unrestricted writes via SP Flash Tool.
+On MTK devices where `fastboot flashing unlock` fails or where the TEE confirmation screen cannot accept input (e.g., the 557's ADC joystick buttons), patch the LK binary directly to make it report an always-unlocked state.
+
+This requires [lkpatcher](https://github.com/R0rt1z2/lkpatcher) (`pip install lkpatcher`).
 
 ```bash
-# 1. Zero out the AND_ROMINFO_v magic (16 bytes at offset 0x1288 for UFS_BOOT preloaders)
-python3 -c "
-d = bytearray(open('preloader_a.bin','rb').read())
-d[0x1288:0x1298] = b'\x00' * 16
-open('preloader_a_patched.bin','wb').write(d)
-"
+# 1. Unpack the LK image
+./lk-unpack lk_a.img -o lk_unpacked/
 
-# 2. Re-sign
-./preloader-resign preloader_a_patched.bin -o preloader_a_norominfo.bin
+# 2. Patch the LK binary (fastboot, dm_verity, orange_state, red_state patches)
+python3 -m lkpatcher lk_unpacked/lk/data.bin -o lk_unpacked/lk/data.bin
 
-# 3. Flash to both preloader slots
+# 3. Repack and re-sign (write to /tmp to avoid NTFS issues)
+./lk-repack lk_unpacked/ lk_a.img -o /tmp/lk_patched.img
+
+# 4. Confirm re-signing
+./lk-resign /tmp/lk_patched.img
+
+# 5. Flash
+fastboot flash lk_a /tmp/lk_patched.img
+fastboot flash lk_b /tmp/lk_patched.img
 ```
 
-See [DA_ANALYSIS.md](DA_ANALYSIS.md) for a detailed explanation of why this works.
+After flashing and rebooting to fastboot, `fastboot getvar unlocked` should return `yes`. The four patch categories applied by lkpatcher:
+
+- **fastboot**: forces the unlock-state check to always return 0 (unlocked)
+- **dm_verity**: suppresses vbmeta/dm-verity state warnings
+- **orange_state**: suppresses the LCS/orange-state warning screen on boot
+- **red_state**: suppresses device verification failure output
+
+See [BOOTLOADER_UNLOCK.md](BOOTLOADER_UNLOCK.md) for a full explanation of how the patches work, the needle byte sequences, and the 557-specific TEE/ADC button issue.
+
+### Bypass DA flash restrictions via preloader patch
+
+On devices where the Download Agent (DA) rejects partition writes (even for valid images), you can patch the preloader to zero out the AND_ROMINFO_v block. The DA reads this block to determine security policy; zeroing it causes the DA to fall back to permissive mode, allowing unrestricted writes via SP Flash Tool or mtkclient.
+
+```bash
+# Check preloader structure and AND_ROMINFO_v status
+./preloader-patch preloader_a.bin --info
+
+# Zero AND_ROMINFO_v
+./preloader-patch preloader_a.bin --zero-rominfo -o preloader_a_patched.bin
+
+# Re-sign the patched preloader
+./preloader-resign preloader_a_patched.bin -o preloader_a_final.bin
+
+# Flash to both preloader slots
+fastboot flash preloader_a preloader_a_final.bin
+fastboot flash preloader_b preloader_a_final.bin
+```
+
+For UFS_BOOT preloaders (MT6897, most modern MTK), AND_ROMINFO_v is at offset 0x1288 from the file start. The tool searches for the magic automatically and falls back to this known offset if not found.
+
+See [PRELOADER_PATCHING.md](PRELOADER_PATCHING.md) for the full explanation and [DA_ANALYSIS.md](DA_ANALYSIS.md) for why this works.
 
 ### Important: Windows/NTFS mount workaround
 
